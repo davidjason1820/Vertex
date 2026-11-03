@@ -778,6 +778,11 @@ function baseline(el, y){
   var A = m.fontBoundingBoxAscent || f.size*.8, D = m.fontBoundingBoxDescent || f.size*.2;
   // place top so the first baseline lands at design-y
   el.style.top = (y - ((f.size - (A + D))/2 + A)) + 'px';
+  // Remember the raw fitted top. On tablet .stack itself is translated by
+  // --stshift; elements that ride inside it must NOT also absorb the shift
+  // inline (that would move them twice), while wmName — which sits outside the
+  // shifted subtree — compensates by moving down by sh itself. See applyStackShift.
+  el.__baseTop = parseFloat(el.style.top);
 }
 var BIAS = 1.1;   // the reference sits labels ~0.6px below true centre
 function centreLabel(btn, el, capPx){
@@ -798,17 +803,15 @@ function centreLabel(btn, el, capPx){
 // On tablet the hero stack travels by --stshift, so every baseline-derived
 // `top` must travel with it — otherwise the type drifts off its baselines.
 function applyStackShift(){
-  var v = [h1a,h1b,sub1,sub2,wmName];
-  if (!tablet){
-    for (var i = 0; i < v.length; i++) if (v[i].__baseTop === undefined) continue; else v[i].style.top = v[i].__baseTop + 'px';
-    return;
-  }
-  var sh = parseFloat(canvas.style.getPropertyValue('--stshift')) || 0;   // design px
-  for (var j = 0; j < v.length; j++){
-    var el = v[j];
-    if (el.__baseTop === undefined) continue;
-    el.style.top = (el.__baseTop + sh) + 'px';
-  }
+  // .stack is translated by --stshift in CSS; h1/sub ride inside it, so their
+  // inline tops must NOT absorb the shift (double-move). wmName sits outside
+  // the shifted subtree, so it compensates by moving down itself.
+  var sh = tablet ? (parseFloat(canvas.style.getPropertyValue('--stshift')) || 0) : 0;
+  [h1a,h1b,sub1,sub2].forEach(function(el){
+    if (el.__baseTop === undefined) return;
+    el.style.top = el.__baseTop + 'px';
+  });
+  if (wmName.__baseTop !== undefined) wmName.style.top = (wmName.__baseTop + sh) + 'px';
 }
 
 /* ---------------- SCALE LAW + LAYOUT ---------------- */
@@ -833,7 +836,7 @@ function resize(){
   }
   // k = min(vw/W, vh/560): fills width, lets the mock bleed off the bottom
   k = Math.min(vw / W, vh / 560);
-  var ramp = 0, rs = 1, ss = 0, st = 0, fill = 0;
+  var ramp = 0, rs = 1, ss = 0, stVP = 0, fill = 0;
   tboost = 1;
   if (tablet){
     ramp = Math.min(1, (TAB_MAX - vw)/120);        // ease the architecture change over 120px
@@ -844,7 +847,10 @@ function resize(){
       ss = Math.min(fill*0.55, 420) * ramp;         // wheel + mock travel toward the foot
       rs = 1 + Math.min(fill/1100, 0.75) * ramp;    // wheel grows = a closer camera
       var slack = 219.5 - 125*rs + ss;
-      st = Math.max(0, slack/2 - 28) * ramp;       // hero drops to sit optically centred
+      // --stshift is consumed by CSS in VIEWPORT px (.stack lives inside the
+      // scaled canvas), so author it as design-px travel * k. The fitter's
+      // tops stay pure design px; applyStackShift() compensates wmName.
+      stVP = Math.max(0, slack/2 - 28) * ramp * k;  // hero drops to sit optically centred
       fill -= ss;                                  // mock keeps only what is left
     }
   }
@@ -898,6 +904,7 @@ function layout(){
   }
   var rowW = links.getBoundingClientRect().width / k;
   links.style.transform = 'scaleX(' + (317 / rowW) + ')';
+  applyStackShift();   // tablet: baseline tops travel with --stshift
   placeCards();
 }
 
